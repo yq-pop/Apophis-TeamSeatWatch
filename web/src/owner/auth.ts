@@ -134,6 +134,21 @@ export async function exportChildMaterials(scope: 'selected' | 'filtered', accou
   return response.data;
 }
 
+export async function deleteChildMaterials(accountIds: string[]): Promise<{ deleted: number }> {
+  const headers = await mutationHeaders();
+  const response = await fetch('/api/owner/v1/target-accounts/delete', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify({ accountIds, confirmed: true }),
+  });
+  const body: unknown = await response.json().catch(() => undefined);
+  if (!response.ok) {
+    throw new OwnerApiError(response.status, body);
+  }
+  return (body as { deleted: number }) ?? { deleted: accountIds.length };
+}
+
 export async function getTargetPersonalAccess(targetAccountId: string): Promise<components['schemas']['TargetPersonalAccess']> {
   const response = await ownerApi.GET('/api/owner/v1/target-accounts/{targetAccountId}/personal-session', { params: { path: { targetAccountId } } });
   throwIfFailed(response);

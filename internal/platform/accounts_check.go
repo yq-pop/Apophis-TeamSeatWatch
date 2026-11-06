@@ -81,6 +81,7 @@ type accountsRoleFields struct {
 	WorkspaceRoleCamel string `json:"workspaceRole"`
 	AccountRole        string `json:"account_role"`
 	AccountRoleCamel   string `json:"accountRole"`
+	AccountUserRole    string `json:"account_user_role"`
 	Role               string `json:"role"`
 }
 
@@ -132,7 +133,9 @@ func ParseAccountsCheckWorkspaces(data []byte) ([]DiscoveredWorkspace, error) {
 		}
 		// Team/Business are the only evidenced target plans. Unknown plans or
 		// kinds cannot become selectable merely because structure says workspace.
-		if structure != "workspace" || (plan != "team" && plan != "business") ||
+		// OpenAI's self-serve Business plan is reported as
+		// "self_serve_business_usage_based", not "business".
+		if structure != "workspace" || !targetWorkspacePlan(plan) ||
 			(kind != "" && kind != "workspace" && kind != "team") {
 			return nil, errors.New("accounts check Team plan or kind unknown")
 		}
@@ -153,11 +156,22 @@ func ParseAccountsCheckWorkspaces(data []byte) ([]DiscoveredWorkspace, error) {
 	return workspaces, nil
 }
 
+// targetWorkspacePlan reports the plan types that identify a paid Team/Business
+// Workspace. OpenAI reports the self-serve Business plan as
+// "self_serve_business_usage_based"; personal entries are filtered out earlier.
+func targetWorkspacePlan(plan string) bool {
+	switch plan {
+	case "team", "business", "self_serve_business_usage_based":
+		return true
+	}
+	return false
+}
+
 func roleFromFields(fields *accountsRoleFields) string {
 	if fields == nil {
 		return ""
 	}
-	return firstNonEmpty(fields.WorkspaceRole, fields.WorkspaceRoleCamel, fields.AccountRole, fields.AccountRoleCamel, fields.Role)
+	return firstNonEmpty(fields.WorkspaceRole, fields.WorkspaceRoleCamel, fields.AccountRole, fields.AccountRoleCamel, fields.AccountUserRole, fields.Role)
 }
 
 func firstNonEmpty(values ...string) string {

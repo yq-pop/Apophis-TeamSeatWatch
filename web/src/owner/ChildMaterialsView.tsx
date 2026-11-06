@@ -8,7 +8,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { createColumnHelper, tableFeatures, useTable } from '@tanstack/react-table';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { components } from '../generated/owner';
-import { exportChildMaterials, importChildMaterials, listChildMaterials, ownerProblem, resolveFilteredChildMaterials, updateChildMaterial, type AccountProbeFilter, type AccountTokenFilter } from './auth';
+import { deleteChildMaterials, exportChildMaterials, importChildMaterials, listChildMaterials, ownerProblem, resolveFilteredChildMaterials, updateChildMaterial, type AccountProbeFilter, type AccountTokenFilter } from './auth';
 import { togglePage } from './childSelection';
 import OwnerIcon from './OwnerIcon';
 import { usePersonalProbes } from './usePersonalProbes';
@@ -57,6 +57,8 @@ export default function ChildMaterialsView({ active: visible = true }: { active?
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [editing, setEditing] = useState<Child | null>(null);
+  const [deletingIds, setDeletingIds] = useState<string[] | null>(null);
+  const [deletingLabel, setDeletingLabel] = useState('');
   const [password, setPassword] = useState('');
   const [totp, setTotp] = useState('');
   const [notice, setNotice, dismissNotice] = useActionFeedback('');
@@ -236,6 +238,27 @@ export default function ChildMaterialsView({ active: visible = true }: { active?
     } finally { setPending(false); }
   }
 
+  async function confirmDelete() {
+    if (!deletingIds || deletingIds.length === 0 || pending) return;
+    setPending(true); setNotice('');
+    try {
+      const idsToDelete = [...deletingIds];
+      const result = await deleteChildMaterials(idsToDelete);
+      const next = new Set(selected);
+      for (const id of idsToDelete) {
+        next.delete(id);
+        selectedNames.current.delete(id);
+      }
+      setSelected(next);
+      setDeletingIds(null);
+      setDeletingLabel('');
+      setNotice(`已删除 ${result.deleted} 个账号`);
+      setRevision((value) => value + 1);
+    } catch (error: unknown) {
+      setNotice(ownerProblem(error).status === 401 ? '登录已失效，请重新登录。' : '账号删除失败，请重试。');
+    } finally { setPending(false); }
+  }
+
   const title = view === 'list' ? '账号管理' : '导入账号';
 
   return <Stack gap={24} className="accounts-page">
@@ -287,7 +310,7 @@ export default function ChildMaterialsView({ active: visible = true }: { active?
         <Select disabled={pending} aria-label="AT 状态" clearable placeholder="全部 AT 状态" value={tokenFilter ?? null} data={Object.entries(tokenLabels).map(([value, label]) => ({ value, label }))} onChange={(value) => { setTokenFilter(value ? value as AccountATFilter : undefined); setPage(1); clearSelection(); }} />
         <Group className="account-filter-actions" gap={4} wrap="nowrap"><Button variant="subtle" color="gray" size="sm" disabled={pending || (!search && !domain && !probeFilter && !tokenFilter)} onClick={() => { setSearch(''); setDomain(''); setProbeFilter(undefined); setTokenFilter(undefined); setPage(1); clearSelection(); }}>重置</Button><ActionIcon variant="subtle" color="gray" size={32} aria-label="刷新" title="刷新" disabled={loading || pending} onClick={() => setRevision((value) => value + 1)}><OwnerIcon name="refresh" size={16} /></ActionIcon></Group>
       </Box>
-      <ListSelectionBar count={selected.size} total={total} disabled={loading || pending} selecting={pending} onSelectAll={() => void selectAllFiltered()} onClear={clearSelection} actions={<Button variant="default" size="sm" disabled={loading || pending || probes.busy || accountLogin.busy} leftSection={<OwnerIcon name="refresh" size={16} />} onClick={() => startProbe()}>批量探测选中 {selected.size} 个</Button>} />
+      <ListSelectionBar count={selected.size} total={total} disabled={loading || pending} selecting={pending} onSelectAll={() => void selectAllFiltered()} onClear={clearSelection} actions={<Group gap={8}><Button variant="default" size="sm" disabled={loading || pending || probes.busy || accountLogin.busy} leftSection={<OwnerIcon name="refresh" size={16} />} onClick={() => startProbe()}>批量探测选中 {selected.size} 个</Button><Button variant="outline" color="error" size="sm" disabled={loading || pending || probes.busy || accountLogin.busy || selected.size === 0} onClick={() => { setNotice(''); setDeletingIds([...selected]); setDeletingLabel(`选中的 ${selected.size} 个账号`); }}>批量删除选中 {selected.size} 个</Button></Group>} />
       {accountLogin.batch ? <Group className="account-task-bar account-at-task-bar" justify="space-between" role="status"><Group gap={8}><OwnerIcon name="refresh" size={16} /><Text size="sm">{accountLogin.batch.status === 'running' ? `正在获取 AT · 已处理 ${accountLogin.batch.processed} / ${accountLogin.batch.total ?? '…'}` : accountLogin.batch.status === 'completed' ? `获取 AT 完成 · 成功 ${accountLogin.batch.succeeded} · 失败 ${accountLogin.batch.failed} · 跳过 ${accountLogin.batch.skipped}` : `${accountLogin.batch.status === 'canceled' ? '已停止获取 AT' : '获取 AT 已暂停'} · 已处理 ${accountLogin.batch.processed} / ${accountLogin.batch.total ?? '…'}`}</Text>{accountLogin.batch.error ? <Text size="xs" c="warning">{accountLogin.batch.error}</Text> : null}</Group><Group gap={4}>{accountLogin.batch.status === 'running' ? <Button variant="subtle" color="error" size="xs" loading={accountLogin.stopping} onClick={accountLogin.stopAll}>停止获取</Button> : accountLogin.batch.status !== 'completed' ? <Button variant="subtle" size="xs" disabled={accountLogin.busy || probes.busy} onClick={continueAllAT}>继续获取</Button> : null}{accountLogin.batch.status !== 'running' ? <Button variant="subtle" color="gray" size="xs" onClick={accountLogin.dismissBatch}>清除记录</Button> : null}</Group></Group> : null}
       {probes.busy ? <Group className="account-task-bar" justify="space-between" role="status"><Group gap={8}><OwnerIcon name="refresh" size={16} /><Text size="sm">{probes.batch ? `正在探测${probes.batch.scope === 'filtered' ? '全部账号' : '选中账号'} · 已完成 ${probes.batch.succeeded + probes.batch.failed + probes.batch.canceled} / ${probes.batch.total}` : probes.starting ? '正在启动探测' : '正在恢复探测进度'}</Text>{probes.batch?.notSavedOrRetained ? <Text size="xs" c="warning">{probes.batch.notSavedOrRetained} 个结果待核实</Text> : null}</Group>{probes.batch && probes.batch.queued + probes.batch.running > 0 ? <Button variant="subtle" color="error" size="xs" loading={probes.canceling} onClick={() => void probes.cancel()}>取消待处理</Button> : !probes.starting && !probes.batch ? <Button variant="subtle" color="gray" size="xs" onClick={probes.stopTracking}>停止追踪</Button> : null}</Group> : null}
       <ScrollArea.Autosize mah="max(320px, calc(100dvh - 388px))" type="auto" className="account-table-scroll"><Table aria-busy={loading} highlightOnHover stickyHeader miw={1040} className="account-table"><Table.Thead><Table.Tr>
@@ -299,13 +322,16 @@ export default function ChildMaterialsView({ active: visible = true }: { active?
         <Table.Td><StatusBadge label={!tokens ? '—' : tokens.hasAccessToken ? '有' : '无'} tone={tokens?.hasAccessToken ? 'success' : 'gray'} /></Table.Td>
         <Table.Td><StatusBadge tone={probing ? 'indigo' : probe.status === 'available' ? 'success' : probe.status === 'unprobed' ? 'gray' : probe.status === 'definitely_unavailable' || probe.status === 'account_problem' ? 'error' : 'warning'} label={probing ? '探测中' : probe.label} /></Table.Td>
         <Table.Td><Timestamp value={probe.at} /></Table.Td>
-        <Table.Td><Stack gap={4} align="center"><Group gap={4} wrap="nowrap" justify="center"><Button variant="subtle" size="xs" loading={copier.copyingId === row.original.id} disabled={loading || pending || copier.copyingId !== null} onClick={() => copyAccount(row.original)}>{copier.copiedId === row.original.id ? '已复制' : '复制'}</Button><Button variant="subtle" size="xs" loading={loggingIn} disabled={loading || pending || probing || row.original.status !== 'active'} onClick={() => { setNotice(''); void accountLogin.login(row.original); }}>{loggingIn ? '获取中' : '获取 AT'}</Button><Button variant="subtle" size="xs" loading={probing} disabled={loading || pending || probes.busy || loggingIn || row.original.status !== 'active'} onClick={() => { setNotice(''); void probes.startAccount(row.original); }}>探测</Button></Group>{feedback ? <Text size="xs" c={feedback.tone} role="status" maw={260}>{feedback.message}{feedback.proxy ? <> · <a href="#proxy">代理管理</a></> : null}</Text> : null}</Stack></Table.Td>
+        <Table.Td><Stack gap={4} align="center"><Group gap={4} wrap="nowrap" justify="center"><Button variant="subtle" size="xs" loading={copier.copyingId === row.original.id} disabled={loading || pending || copier.copyingId !== null} onClick={() => copyAccount(row.original)}>{copier.copiedId === row.original.id ? '已复制' : '复制'}</Button><Button variant="subtle" size="xs" loading={loggingIn} disabled={loading || pending || probing || row.original.status !== 'active'} onClick={() => { setNotice(''); void accountLogin.login(row.original); }}>{loggingIn ? '获取中' : '获取 AT'}</Button><Button variant="subtle" size="xs" loading={probing} disabled={loading || pending || probes.busy || loggingIn || row.original.status !== 'active'} onClick={() => { setNotice(''); void probes.startAccount(row.original); }}>探测</Button><Button variant="outline" color="error" className="record-delete-action" size="xs" disabled={loading || pending || probing || loggingIn || probes.busy || accountLogin.busy} onClick={() => { setNotice(''); setDeletingIds([row.original.id]); setDeletingLabel(`账号「${row.original.identifier}」`); }}>删除</Button></Group>{feedback ? <Text size="xs" c={feedback.tone} role="status" maw={260}>{feedback.message}{feedback.proxy ? <> · <a href="#proxy">代理管理</a></> : null}</Text> : null}</Stack></Table.Td>
       </Table.Tr>; })}</Table.Tbody></Table></ScrollArea.Autosize>
       {loading ? <Text className="account-empty-state" role="status">正在读取账号</Text> : !notice && !items.length ? <Box className="account-empty-state"><OwnerIcon name={search || domain || probeFilter || tokenFilter ? 'search' : 'accounts'} size={24} /><Text c="dimmed" ta="center">{readFailed ? '账号读取失败，请刷新重试' : search || domain || probeFilter || tokenFilter ? '无匹配账号' : '暂无账号'}</Text></Box> : null}
       <ListPagination page={page} pageSize={pageSize} total={total} disabled={pending || loading} onPageChange={setPage} onPageSizeChange={(next) => { setPageSize(next); setPage(1); }} />
     </Paper> : null}
     <Modal opened={editing !== null} onClose={() => setEditing(null)} title={editing ? `编辑 ${editing.identifier}` : '编辑账号'} centered>
       <Stack gap="md"><PasswordInput label="新密码" value={password} onChange={(event) => setPassword(event.currentTarget.value)} /><TextInput label="新2FA" value={totp} onChange={(event) => setTotp(event.currentTarget.value)} /><Group justify="flex-end"><Button variant="default" onClick={() => setEditing(null)}>取消</Button><Button disabled={!password && !totp.trim()} loading={pending} onClick={() => void correct()}>保存</Button></Group></Stack>
+    </Modal>
+    <Modal opened={deletingIds !== null} onClose={() => { if (!pending) { setDeletingIds(null); setDeletingLabel(''); } }} closeOnClickOutside={!pending} closeOnEscape={!pending} withCloseButton={!pending} title="删除账号" centered>
+      <Stack gap="md"><Text>确认删除{deletingLabel}？</Text><Text size="sm" c="dimmed">删除后将从账号列表及待命批次中彻底移除，此操作不可恢复。</Text><Group justify="flex-end"><Button variant="default" disabled={pending} onClick={() => { setDeletingIds(null); setDeletingLabel(''); }}>取消</Button><Button color="error" variant="outline" disabled={pending} loading={pending} onClick={() => void confirmDelete()}>确认删除</Button></Group></Stack>
     </Modal>
   </Stack>;
 }

@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -67,16 +66,16 @@ func Open(ctx context.Context, root string, e Environment) (*Profile, error) {
 	if err = privateDirectory(directory); err != nil {
 		return nil, err
 	}
-	lock, err := os.OpenFile(filepath.Join(directory, ".environment.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	lock, err := openProfileLock(filepath.Join(directory, ".environment.lock"))
 	if err != nil {
 		return nil, err
 	}
 	for {
-		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err = lockProfile(lock)
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) {
+		if !profileLockBusy(err) {
 			lock.Close()
 			return nil, err
 		}
@@ -169,10 +168,7 @@ func (p *Profile) CleanupProcesses() {
 				continue
 			}
 			alive = true
-			if group, err := syscall.Getpgid(pid); err == nil && group == pid {
-				_ = syscall.Kill(-group, syscall.SIGKILL)
-			}
-			_ = syscall.Kill(pid, syscall.SIGKILL)
+			killProfileProcess(pid)
 		}
 		if !alive {
 			return
@@ -194,7 +190,7 @@ func (p *Profile) Close() {
 	for _, name := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
 		_ = os.Remove(filepath.Join(p.Directory, name))
 	}
-	_ = syscall.Flock(int(p.lock.Fd()), syscall.LOCK_UN)
+	_ = unlockProfile(p.lock)
 	_ = p.lock.Close()
 	p.lock = nil
 }

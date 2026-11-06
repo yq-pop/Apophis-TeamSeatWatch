@@ -182,6 +182,7 @@ func NewOwnerAuthHandler(config OwnerAuthConfig) (*OwnerControl, func(), error) 
 		handler.proxyPool.loop(serviceContext)
 	}()
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/owner/v1/target-accounts/delete", handler.deleteTargetAccounts)
 	ownerHandler := ownerapi.HandlerWithOptions(handler, ownerapi.StdHTTPServerOptions{
 		BaseRouter: mux,
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {

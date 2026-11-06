@@ -50,6 +50,13 @@ func TestParseAccountsCheckWorkspacesFailsClosedOnPersonalAndUnknownPlans(t *tes
 	}
 }
 
+func TestParseAccountsCheckWorkspacesAdmitsSelfServeBusinessWorkspace(t *testing.T) {
+	workspaces, err := ParseAccountsCheckWorkspaces([]byte(`{"accounts":{"biz":{"account":{"account_id":"ws-biz","name":"AI","plan_type":"self_serve_business_usage_based","structure":"workspace","account_user_role":"account-owner"}}}}`))
+	if err != nil || len(workspaces) != 1 || workspaces[0].PlatformID != "ws-biz" || workspaces[0].Access != "readable" || workspaces[0].Role != "owner" {
+		t.Fatalf("self-serve business workspace rejected: %+v %v", workspaces, err)
+	}
+}
+
 func TestAccountsCheckDiscoveryDoesNotTreatFailuresAsEmpty(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
